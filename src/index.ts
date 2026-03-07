@@ -5,7 +5,7 @@
  * bypassing OAuth token scope restrictions.
  */
 
-import { startServer, stopServer, getServer } from "./server/index.js";
+import { startServer, stopServer, getServer, getApiKey } from "./server/index.js";
 import { verifyClaude, verifyAuth } from "./subprocess/manager.js";
 
 // Provider constants
@@ -138,6 +138,7 @@ const claudeCodeCliPlugin = {
               spin.stop("Claude CLI provider ready");
 
               const baseUrl = `http://127.0.0.1:${serverPort}/v1`;
+              const apiKey = getApiKey();
 
               return {
                 profiles: [
@@ -146,7 +147,7 @@ const claudeCodeCliPlugin = {
                     credential: {
                       type: "token",
                       provider: PROVIDER_ID,
-                      token: "local", // Dummy token - CLI handles auth
+                      token: apiKey,
                     },
                   },
                 ],
@@ -155,9 +156,9 @@ const claudeCodeCliPlugin = {
                     providers: {
                       [PROVIDER_ID]: {
                         baseUrl,
-                        apiKey: "local",
+                        apiKey,
                         api: "openai-completions",
-                        authHeader: false,
+                        authHeader: true,
                         models: AVAILABLE_MODELS.map(buildModelDefinition),
                       },
                     },

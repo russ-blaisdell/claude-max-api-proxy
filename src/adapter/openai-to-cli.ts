@@ -78,12 +78,23 @@ export function messagesToPrompt(messages: OpenAIChatRequest["messages"]): strin
 }
 
 /**
+ * Sanitize a session ID so only safe characters reach the CLI argument list.
+ * Accepts UUID format and alphanumeric strings up to 64 characters.
+ */
+function sanitizeSessionId(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  // Allow UUID format (hex + hyphens) and plain alphanumeric identifiers
+  if (/^[a-zA-Z0-9-]{1,64}$/.test(value)) return value;
+  return undefined;
+}
+
+/**
  * Convert OpenAI chat request to CLI input format
  */
 export function openaiToCli(request: OpenAIChatRequest): CliInput {
   return {
     prompt: messagesToPrompt(request.messages),
     model: extractModel(request.model),
-    sessionId: request.user, // Use OpenAI's user field for session mapping
+    sessionId: sanitizeSessionId(request.user),
   };
 }

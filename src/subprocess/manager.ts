@@ -51,10 +51,16 @@ export class ClaudeSubprocess extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       try {
-        // Use spawn() for security - no shell interpretation
+        // Use spawn() for security - no shell interpretation.
+        // Default cwd to home directory rather than process.cwd() so the
+        // subprocess never implicitly inherits a sensitive working directory.
+        // Strip CLAUDECODE env var to prevent recursive self-invocation.
+        const spawnEnv = { ...process.env };
+        delete spawnEnv.CLAUDECODE;
+
         this.process = spawn("claude", args, {
-          cwd: options.cwd || process.cwd(),
-          env: { ...process.env },
+          cwd: options.cwd || process.env.HOME || "/tmp",
+          env: spawnEnv,
           stdio: ["pipe", "pipe", "pipe"],
         });
 

@@ -8,7 +8,7 @@
  *   node dist/server/standalone.js [port]
  */
 
-import { startServer, stopServer } from "./index.js";
+import { startServer, stopServer, getApiKey } from "./index.js";
 import { verifyClaude, verifyAuth } from "../subprocess/manager.js";
 
 const DEFAULT_PORT = 3456;
@@ -46,9 +46,18 @@ async function main(): Promise<void> {
   // Start server
   try {
     await startServer({ port });
+    const apiKey = getApiKey();
+    console.log("\n========================================");
+    console.log("API Key (keep this secret):");
+    console.log(`  ${apiKey}`);
+    if (!process.env.CLAUDE_PROXY_API_KEY) {
+      console.log("\n  Tip: set CLAUDE_PROXY_API_KEY=<key> to use a fixed key across restarts.");
+    }
+    console.log("========================================");
     console.log("\nServer ready. Test with:");
     console.log(`  curl -X POST http://localhost:${port}/v1/chat/completions \\`);
     console.log(`    -H "Content-Type: application/json" \\`);
+    console.log(`    -H "Authorization: Bearer ${apiKey}" \\`);
     console.log(`    -d '{"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "Hello!"}]}'`);
     console.log("\nPress Ctrl+C to stop.\n");
   } catch (err) {
