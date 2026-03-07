@@ -190,7 +190,23 @@ response = client.chat.completions.create(
 
 ## Auto-Start on macOS
 
-Create a LaunchAgent to start the provider automatically on login. See `docs/macos-setup.md` for detailed instructions.
+Run the install script to set up a LaunchAgent that starts the proxy automatically on login, generates an API key, and configures OpenClaw in one step:
+
+```bash
+./scripts/install.sh
+```
+
+Manage the running service:
+
+```bash
+./scripts/service.sh status
+./scripts/service.sh restart
+./scripts/service.sh logs
+./scripts/service.sh stop
+./scripts/service.sh uninstall
+```
+
+See `docs/macos-setup.md` for full details and troubleshooting.
 
 ## Architecture
 

@@ -1,120 +1,103 @@
-# macOS Auto-Start Setup
+# macOS Setup
 
-This guide shows how to configure the Claude Code CLI Provider to start automatically when you log in.
+## Install as a LaunchAgent (auto-start on login)
 
-## Create LaunchAgent
-
-1. Create the plist file:
+Run the install script from the repo root:
 
 ```bash
-cat > ~/Library/LaunchAgents/com.claude-code-provider.plist << 'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>com.claude-code-provider</string>
-    
-    <key>Comment</key>
-    <string>Claude Code CLI Provider (uses Claude Max subscription)</string>
-    
-    <key>RunAtLoad</key>
-    <true/>
-    
-    <key>KeepAlive</key>
-    <true/>
-    
-    <key>ProgramArguments</key>
-    <array>
-      <string>/opt/homebrew/bin/node</string>
-      <string>/path/to/claude-code-cli-provider/dist/server/standalone.js</string>
-    </array>
-    
-    <key>StandardOutPath</key>
-    <string>/tmp/claude-provider.log</string>
-    
-    <key>StandardErrorPath</key>
-    <string>/tmp/claude-provider.err.log</string>
-    
-    <key>EnvironmentVariables</key>
-    <dict>
-      <key>HOME</key>
-      <string>/Users/YOUR_USERNAME</string>
-      <key>PATH</key>
-      <string>/Users/YOUR_USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-    </dict>
-  </dict>
-</plist>
-PLIST
+./scripts/install.sh
 ```
 
-2. **Important:** Edit the file and replace:
-   - `/path/to/claude-code-cli-provider` with your actual path
-   - `/Users/YOUR_USERNAME` with your actual username
-   - Ensure the PATH includes the directory containing `claude` (check with `which claude`)
+The script will:
 
-## Load the Service
+1. Verify `node` and `claude` CLI are in your PATH
+2. Build the TypeScript source if needed
+3. Generate a cryptographically random 256-bit API key
+4. Write `~/Library/LaunchAgents/com.claude-max-api-proxy.plist` with the key baked in
+5. Load and start the service immediately
+6. Update `~/.openclaw/openclaw.json` with the new API key (if OpenClaw is installed)
+7. Print a summary with your API key and a ready-to-run test command
+
+The service will start automatically on every login.
+
+---
+
+## Managing the service
+
+Use `scripts/service.sh` for all day-to-day operations:
 
 ```bash
-# Load and start the service
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude-code-provider.plist
+# Show status and health check
+./scripts/service.sh status
 
-# Verify it's running
-launchctl list | grep claude-code
-curl http://localhost:3456/health
-```
+# Start the service
+./scripts/service.sh start
 
-## Management Commands
-
-```bash
-# Check status
-launchctl list | grep claude-code
+# Stop the service
+./scripts/service.sh stop
 
 # Restart the service
-launchctl kickstart -k gui/$(id -u)/com.claude-code-provider
+./scripts/service.sh restart
 
-# Stop the service (temporary)
-launchctl bootout gui/$(id -u)/com.claude-code-provider
+# Tail combined stdout + stderr logs
+./scripts/service.sh logs
 
-# Start the service again
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.claude-code-provider.plist
+# Tail stdout only
+./scripts/service.sh logs:out
 
-# View logs
-tail -f /tmp/claude-provider.log
-tail -f /tmp/claude-provider.err.log
+# Tail stderr only
+./scripts/service.sh logs:err
+
+# Remove the service entirely
+./scripts/service.sh uninstall
 ```
 
-## Uninstall
+---
+
+## Reinstalling with a new API key
+
+Just run the install script again — it stops the existing service, generates a fresh key, rewrites the plist, reloads the service, and updates your OpenClaw config:
 
 ```bash
-# Stop and remove the service
-launchctl bootout gui/$(id -u)/com.claude-code-provider
-rm ~/Library/LaunchAgents/com.claude-code-provider.plist
+./scripts/install.sh
 ```
+
+---
+
+## Log locations
+
+| Stream | Path |
+|--------|------|
+| stdout | `/tmp/claude-max-proxy.log` |
+| stderr | `/tmp/claude-max-proxy.err.log` |
+
+---
 
 ## Troubleshooting
 
-### Service starts but health check fails
+### Service won't start
 
 Check the error log:
 ```bash
-cat /tmp/claude-provider.err.log
+./scripts/service.sh logs:err
 ```
 
-Common issues:
-- Wrong path to `standalone.js`
-- `claude` CLI not in PATH
-- Node.js not found
+Common causes:
+- `claude` CLI not in the PATH baked into the plist — re-run `./scripts/install.sh` after ensuring `which claude` works in your shell
+- Node not found — check that `which node` resolves correctly
+- Port 3456 already in use — check `lsof -i :3456`
+
+### Health check fails after start
+
+The server may take a second or two after launchctl loads it. Wait and retry:
+```bash
+curl http://localhost:3456/health
+```
 
 ### Finding the right paths
 
 ```bash
-# Find node
-which node
-
-# Find claude
-which claude
-
-# Your home directory
+which node    # should be your nvm or system node
+which claude  # should be ~/.local/bin/claude or similar
 echo $HOME
 ```
