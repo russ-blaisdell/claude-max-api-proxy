@@ -12,7 +12,7 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/server/standalone.js",
-    "test": "node --test dist/**/*.test.js",
+    "test": "CLAUDE_PROXY_API_KEY=test-key-local-proxy RATE_LIMIT_RPM=5 node --test dist/**/*.test.js",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build"
   },
