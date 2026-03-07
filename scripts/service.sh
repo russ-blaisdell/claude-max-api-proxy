@@ -74,7 +74,7 @@ cmd_restart() {
 cmd_status() {
   echo -e "${BOLD}Service:${RESET}"
   if is_running; then
-    PID="$(launchctl list "$LABEL" | awk '/^[0-9]/{print $1}')"
+    PID="$(launchctl list "$LABEL" 2>/dev/null | grep '"PID"' | grep -o '[0-9]*')"
     info "Running (PID: ${PID:-unknown})"
   else
     warn "Not running"
