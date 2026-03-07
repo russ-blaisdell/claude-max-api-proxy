@@ -3,9 +3,15 @@
  * Used for Clawdbot integration
  */
 
+export interface OpenAIContentBlock {
+  type: string;
+  text?: string;
+}
+
 export interface OpenAIChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  // OpenAI spec allows content to be a plain string or an array of content blocks
+  content: string | OpenAIContentBlock[];
 }
 
 export interface OpenAIChatRequest {

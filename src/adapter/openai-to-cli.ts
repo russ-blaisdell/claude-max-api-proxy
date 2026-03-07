@@ -47,6 +47,25 @@ export function extractModel(model: string): ClaudeModel {
 }
 
 /**
+ * Extract plain text from a message content value.
+ *
+ * The OpenAI spec allows content to be either a plain string or an array of
+ * typed content blocks (e.g. [{type:"text", text:"..."}]). Clients such as
+ * webchat frontends commonly send the array form. Passing an array directly
+ * into a template literal produces "[object Object]", so we normalise here.
+ */
+function extractText(content: OpenAIChatRequest["messages"][number]["content"]): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((block) => block.type === "text" && typeof block.text === "string")
+      .map((block) => block.text as string)
+      .join("");
+  }
+  return String(content);
+}
+
+/**
  * Convert OpenAI messages array to a single prompt string for Claude CLI
  *
  * Claude Code CLI in --print mode expects a single prompt, not a conversation.
@@ -56,20 +75,18 @@ export function messagesToPrompt(messages: OpenAIChatRequest["messages"]): strin
   const parts: string[] = [];
 
   for (const msg of messages) {
+    const text = extractText(msg.content);
     switch (msg.role) {
       case "system":
-        // System messages become context instructions
-        parts.push(`<system>\n${msg.content}\n</system>\n`);
+        parts.push(`<system>\n${text}\n</system>\n`);
         break;
 
       case "user":
-        // User messages are the main prompt
-        parts.push(msg.content);
+        parts.push(text);
         break;
 
       case "assistant":
-        // Previous assistant responses for context
-        parts.push(`<previous_response>\n${msg.content}\n</previous_response>\n`);
+        parts.push(`<previous_response>\n${text}\n</previous_response>\n`);
         break;
     }
   }

@@ -7,7 +7,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { openaiToCli, extractModel, messagesToPrompt } from "./openai-to-cli.js";
-import type { OpenAIChatMessage } from "../types/openai.js";
+import type { OpenAIChatMessage, OpenAIContentBlock } from "../types/openai.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -83,6 +83,37 @@ describe("messagesToPrompt", () => {
   it("trims leading and trailing whitespace", () => {
     const msgs: OpenAIChatMessage[] = [{ role: "user", content: "  trimmed  " }];
     assert.equal(messagesToPrompt(msgs), "trimmed");
+  });
+
+  it("extracts text from array content blocks (webchat format)", () => {
+    const content: OpenAIContentBlock[] = [{ type: "text", text: "hello from webchat" }];
+    const msgs: OpenAIChatMessage[] = [{ role: "user", content }];
+    assert.equal(messagesToPrompt(msgs), "hello from webchat");
+  });
+
+  it("joins multiple text blocks in an array content message", () => {
+    const content: OpenAIContentBlock[] = [
+      { type: "text", text: "part one" },
+      { type: "text", text: " part two" },
+    ];
+    const msgs: OpenAIChatMessage[] = [{ role: "user", content }];
+    assert.equal(messagesToPrompt(msgs), "part one part two");
+  });
+
+  it("ignores non-text blocks in array content (e.g. image blocks)", () => {
+    const content: OpenAIContentBlock[] = [
+      { type: "image_url", text: undefined },
+      { type: "text", text: "caption" },
+    ];
+    const msgs: OpenAIChatMessage[] = [{ role: "user", content }];
+    assert.equal(messagesToPrompt(msgs), "caption");
+  });
+
+  it("does not produce [object Object] for array content", () => {
+    const content: OpenAIContentBlock[] = [{ type: "text", text: "real message" }];
+    const msgs: OpenAIChatMessage[] = [{ role: "user", content }];
+    const result = messagesToPrompt(msgs);
+    assert.ok(!result.includes("[object Object]"), "must not contain [object Object]");
   });
 
   it("joins multiple messages in order", () => {
