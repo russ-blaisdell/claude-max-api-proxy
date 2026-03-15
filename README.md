@@ -38,7 +38,7 @@ Your App (Clawdbot, etc.)
 - **Streaming support** — Real-time token streaming via Server-Sent Events
 - **Multiple models** — Claude Opus, Sonnet, and Haiku
 - **Session management** — Maintains conversation context
-- **Auto-start service** — Optional LaunchAgent for macOS
+- **Auto-start service** — systemd (Linux) or LaunchAgent (macOS) with restart-on-failure
 - **Zero configuration** — Uses existing Claude CLI authentication
 - **API key authentication** — Random 256-bit key generated on startup; fixed key via env var
 - **Rate limiting** — Per-IP request throttling to protect your subscription quota
@@ -188,25 +188,52 @@ response = client.chat.completions.create(
 )
 ```
 
-## Auto-Start on macOS
+## Auto-Start Service
 
-Run the install script to set up a LaunchAgent that starts the proxy automatically on login, generates an API key, and configures OpenClaw in one step:
+The install script detects your platform and sets up the appropriate service manager — **systemd** on Linux or **LaunchAgent** on macOS. It generates an API key, starts the service, and configures OpenClaw in one step:
 
 ```bash
 ./scripts/install.sh
 ```
 
-Manage the running service:
+### Linux (systemd)
+
+The installer creates a **systemd user service** at `~/.config/systemd/user/claude-max-api-proxy.service` with:
+
+- **`Restart=on-failure`** — automatically restarts after crashes (5s delay)
+- **`loginctl enable-linger`** — starts at system boot, no login required
+- Logs go to **journald**
 
 ```bash
-./scripts/service.sh status
-./scripts/service.sh restart
-./scripts/service.sh logs
-./scripts/service.sh stop
-./scripts/service.sh uninstall
+# View logs
+journalctl --user -u claude-max-api-proxy -f
+
+# Service status
+systemctl --user status claude-max-api-proxy
 ```
 
-See `docs/macos-setup.md` for full details and troubleshooting.
+### macOS (LaunchAgent)
+
+The installer creates a LaunchAgent plist at `~/Library/LaunchAgents/com.claude-max-api-proxy.plist` with:
+
+- **`KeepAlive`** — automatically restarts after crashes
+- **`RunAtLoad`** — starts on user login
+- Logs go to `/tmp/claude-max-proxy.log` and `/tmp/claude-max-proxy.err.log`
+
+See `docs/macos-setup.md` for macOS-specific troubleshooting.
+
+### Managing the Service
+
+The `service.sh` script wraps the platform-specific commands:
+
+```bash
+./scripts/service.sh status      # Show status + health check
+./scripts/service.sh restart     # Restart the service
+./scripts/service.sh logs        # Follow logs (journald or file tail)
+./scripts/service.sh stop        # Stop the service
+./scripts/service.sh start       # Start the service
+./scripts/service.sh uninstall   # Stop, disable, and remove the service
+```
 
 ## Architecture
 
