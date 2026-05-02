@@ -34,7 +34,15 @@ export interface SubprocessEvents {
   raw: (line: string) => void;
 }
 
-const DEFAULT_TIMEOUT = 300000; // 5 minutes
+const DEFAULT_TIMEOUT = Math.max(
+  60_000,
+  parseInt(process.env.SUBPROCESS_TIMEOUT_MS || "1800000", 10)
+); // default 30 minutes
+const SUBPROCESS_RETRY = Math.max(
+  0,
+  parseInt(process.env.SUBPROCESS_RETRY || "1", 10)
+);
+const RETRY_DELAY_MS = 1000;
 
 export class ClaudeSubprocess extends EventEmitter {
   private process: ChildProcess | null = null;
@@ -87,8 +95,16 @@ export class ClaudeSubprocess extends EventEmitter {
           }
         });
 
-        // Close stdin since we pass prompt as argument
-        this.process.stdin?.end();
+        // Pipe prompt via stdin instead of argv to avoid E2BIG on large
+        // prompts (OS ARG_MAX is typically ~128KB on Linux).
+        if (this.process.stdin) {
+          this.process.stdin.on("error", (err) => {
+            console.error("[Subprocess stdin error]:", err.message);
+          });
+          this.process.stdin.write(prompt, "utf8", () => {
+            this.process?.stdin?.end();
+          });
+        }
 
         console.error(`[Subprocess] Process spawned with PID: ${this.process.pid}`);
 
@@ -131,19 +147,19 @@ export class ClaudeSubprocess extends EventEmitter {
   }
 
   /**
-   * Build CLI arguments array
+   * Build CLI arguments array. Prompt is sent via stdin (see start()) to
+   * avoid E2BIG when the assembled prompt exceeds the OS ARG_MAX limit.
    */
-  private buildArgs(prompt: string, options: SubprocessOptions): string[] {
+  private buildArgs(_prompt: string, options: SubprocessOptions): string[] {
     const args = [
-      "--print", // Non-interactive mode
+      "--print",
       "--output-format",
-      "stream-json", // JSON streaming output
-      "--verbose", // Required for stream-json
-      "--include-partial-messages", // Enable streaming chunks
+      "stream-json",
+      "--verbose",
+      "--include-partial-messages",
       "--model",
-      options.model, // Model alias (opus/sonnet/haiku)
-      "--no-session-persistence", // Don't save sessions
-      prompt, // Pass prompt as argument (more reliable than stdin)
+      options.model,
+      "--no-session-persistence",
     ];
 
     if (options.sessionId) {
@@ -210,6 +226,67 @@ export class ClaudeSubprocess extends EventEmitter {
   isRunning(): boolean {
     return this.process !== null && !this.isKilled && this.process.exitCode === null;
   }
+}
+
+/**
+ * Spawn a ClaudeSubprocess with automatic retry on transient failures.
+ *
+ * Returns a subprocess that is already started. If the initial spawn fails
+ * with a transient error (ENOENT excluded), it retries up to SUBPROCESS_RETRY
+ * times with a 1-second delay between attempts.
+ *
+ * The caller should listen for events on the returned subprocess as usual.
+ */
+export async function spawnWithRetry(
+  prompt: string,
+  options: SubprocessOptions
+): Promise<ClaudeSubprocess> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= SUBPROCESS_RETRY; attempt++) {
+    const subprocess = new ClaudeSubprocess();
+
+    try {
+      await subprocess.start(prompt, options);
+
+      // Wait briefly to see if the process exits immediately (bad spawn)
+      const earlyExit = await Promise.race([
+        new Promise<false>((resolve) => setTimeout(() => resolve(false), 200)),
+        new Promise<true>((resolve) => {
+          subprocess.once("close", (code) => {
+            if (code !== null && code !== 0) resolve(true);
+          });
+        }),
+      ]);
+
+      if (!earlyExit) {
+        // Process is alive — return it
+        return subprocess;
+      }
+
+      // Process died immediately — treat as transient failure
+      lastError = new Error(`Subprocess exited immediately (attempt ${attempt + 1})`);
+      console.error(`[spawnWithRetry] Attempt ${attempt + 1} failed: early exit`);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      // ENOENT = CLI not installed, no point retrying
+      if (lastError.message.includes("ENOENT") || lastError.message.includes("not found")) {
+        throw lastError;
+      }
+
+      console.error(
+        `[spawnWithRetry] Attempt ${attempt + 1} failed: ${lastError.message}`
+      );
+    }
+
+    // Wait before retrying (skip delay on last attempt)
+    if (attempt < SUBPROCESS_RETRY) {
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    }
+  }
+
+  throw lastError || new Error("Subprocess spawn failed after retries");
 }
 
 /**

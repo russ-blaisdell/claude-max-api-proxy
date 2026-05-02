@@ -30,7 +30,7 @@ export function getApiKey(): string {
 // ---------------------------------------------------------------------------
 // Rate limiting — simple per-IP sliding window, no extra dependencies
 // ---------------------------------------------------------------------------
-const RATE_LIMIT_RPM = Math.max(1, parseInt(process.env.RATE_LIMIT_RPM || "60", 10));
+const RATE_LIMIT_RPM = Math.max(1, parseInt(process.env.RATE_LIMIT_RPM || "300", 10));
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(ip: string): boolean {
@@ -116,6 +116,7 @@ function rateLimitMiddleware(req: Request, res: Response, next: NextFunction): v
 
   const ip = req.ip || req.socket.remoteAddress || "unknown";
   if (!checkRateLimit(ip)) {
+    res.setHeader("Retry-After", "5");
     res.status(429).json({
       error: {
         message: `Rate limit exceeded. Max ${RATE_LIMIT_RPM} requests per minute.`,

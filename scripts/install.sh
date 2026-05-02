@@ -44,6 +44,15 @@ LABEL="com.claude-max-api-proxy"
 OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 PORT=3456
 
+# ── Pool / concurrency tunables (override via env before running) ──────────
+MAX_CONCURRENT="${MAX_CONCURRENT:-3}"
+MAX_QUEUE_DEPTH="${MAX_QUEUE_DEPTH:-20}"
+QUEUE_TIMEOUT_MS="${QUEUE_TIMEOUT_MS:-120000}"
+SUBPROCESS_RETRY="${SUBPROCESS_RETRY:-1}"
+DEDUP_WINDOW_MS="${DEDUP_WINDOW_MS:-2000}"
+RATE_LIMIT_RPM="${RATE_LIMIT_RPM:-300}"
+SUBPROCESS_TIMEOUT_MS="${SUBPROCESS_TIMEOUT_MS:-1800000}"
+
 # Resolve the repo root (one directory above this script)
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STANDALONE="$REPO_DIR/dist/server/standalone.js"
@@ -111,8 +120,15 @@ ExecStart=${NODE_PATH} ${STANDALONE}
 Restart=on-failure
 RestartSec=5
 Environment=HOME=${HOME}
-Environment=PATH=$(dirname "$CLAUDE_PATH"):$(dirname "$NODE_PATH"):/usr/local/bin:/usr/bin:/bin
+Environment=PATH=${PATH}
 Environment=CLAUDE_PROXY_API_KEY=${API_KEY}
+Environment=MAX_CONCURRENT=${MAX_CONCURRENT}
+Environment=MAX_QUEUE_DEPTH=${MAX_QUEUE_DEPTH}
+Environment=QUEUE_TIMEOUT_MS=${QUEUE_TIMEOUT_MS}
+Environment=SUBPROCESS_RETRY=${SUBPROCESS_RETRY}
+Environment=DEDUP_WINDOW_MS=${DEDUP_WINDOW_MS}
+Environment=RATE_LIMIT_RPM=${RATE_LIMIT_RPM}
+Environment=SUBPROCESS_TIMEOUT_MS=${SUBPROCESS_TIMEOUT_MS}
 WorkingDirectory=${HOME}
 
 [Install]
@@ -185,6 +201,20 @@ else
       <string>$(dirname "$CLAUDE_PATH"):$(dirname "$NODE_PATH"):/usr/local/bin:/usr/bin:/bin</string>
       <key>CLAUDE_PROXY_API_KEY</key>
       <string>${API_KEY}</string>
+      <key>MAX_CONCURRENT</key>
+      <string>${MAX_CONCURRENT}</string>
+      <key>MAX_QUEUE_DEPTH</key>
+      <string>${MAX_QUEUE_DEPTH}</string>
+      <key>QUEUE_TIMEOUT_MS</key>
+      <string>${QUEUE_TIMEOUT_MS}</string>
+      <key>SUBPROCESS_RETRY</key>
+      <string>${SUBPROCESS_RETRY}</string>
+      <key>DEDUP_WINDOW_MS</key>
+      <string>${DEDUP_WINDOW_MS}</string>
+      <key>RATE_LIMIT_RPM</key>
+      <string>${RATE_LIMIT_RPM}</string>
+      <key>SUBPROCESS_TIMEOUT_MS</key>
+      <string>${SUBPROCESS_TIMEOUT_MS}</string>
     </dict>
 
     <key>StandardOutPath</key>
@@ -258,14 +288,75 @@ else
   warn "  env.OPENAI_API_KEY             = \"${API_KEY}\""
 fi
 
+# ── Step 7: Patch OpenClaw gateway systemd unit (Linux) ───────────────────────
+GATEWAY_UNIT="$HOME/.config/systemd/user/openclaw-gateway.service"
+if [[ "$PLATFORM" == "linux" && -f "$GATEWAY_UNIT" ]]; then
+  section "Patching OpenClaw gateway service"
+
+  # Replace OPENAI_API_KEY in the gateway unit if present
+  if grep -q "OPENAI_API_KEY=" "$GATEWAY_UNIT"; then
+    sed -i "s|^Environment=OPENAI_API_KEY=.*|Environment=OPENAI_API_KEY=${API_KEY}|" "$GATEWAY_UNIT"
+    info "Updated OPENAI_API_KEY in $GATEWAY_UNIT"
+  else
+    # Key line doesn't exist yet — inject it after the [Service] header
+    sed -i "/^\[Service\]/a Environment=OPENAI_API_KEY=${API_KEY}" "$GATEWAY_UNIT"
+    info "Added OPENAI_API_KEY to $GATEWAY_UNIT"
+  fi
+
+  # Same for OPENAI_BASE_URL
+  if grep -q "OPENAI_BASE_URL=" "$GATEWAY_UNIT"; then
+    sed -i "s|^Environment=OPENAI_BASE_URL=.*|Environment=OPENAI_BASE_URL=http://localhost:${PORT}/v1|" "$GATEWAY_UNIT"
+  else
+    sed -i "/^\[Service\]/a Environment=OPENAI_BASE_URL=http://localhost:${PORT}/v1" "$GATEWAY_UNIT"
+  fi
+
+  systemctl --user daemon-reload
+  info "systemd daemon reloaded"
+
+  # Restart gateway if it was running
+  if systemctl --user is-active openclaw-gateway &>/dev/null; then
+    systemctl --user restart openclaw-gateway
+    sleep 2
+    if systemctl --user is-active openclaw-gateway &>/dev/null; then
+      info "OpenClaw gateway restarted with new API key"
+    else
+      warn "OpenClaw gateway failed to restart — check: journalctl --user -u openclaw-gateway -e"
+    fi
+  fi
+elif [[ "$PLATFORM" == "macos" ]]; then
+  # macOS: patch the gateway LaunchAgent plist if it exists
+  GATEWAY_PLIST="$HOME/Library/LaunchAgents/com.openclaw-gateway.plist"
+  if [[ -f "$GATEWAY_PLIST" ]]; then
+    section "Patching OpenClaw gateway LaunchAgent"
+    # Use PlistBuddy to update environment variables
+    /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:OPENAI_API_KEY ${API_KEY}" "$GATEWAY_PLIST" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OPENAI_API_KEY string ${API_KEY}" "$GATEWAY_PLIST" 2>/dev/null
+    /usr/libexec/PlistBuddy -c "Set :EnvironmentVariables:OPENAI_BASE_URL http://localhost:${PORT}/v1" "$GATEWAY_PLIST" 2>/dev/null \
+      || /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:OPENAI_BASE_URL string http://localhost:${PORT}/v1" "$GATEWAY_PLIST" 2>/dev/null
+
+    GATEWAY_DOMAIN="gui/$(id -u)"
+    GATEWAY_LABEL="com.openclaw-gateway"
+    if launchctl list "$GATEWAY_LABEL" &>/dev/null; then
+      launchctl kickstart -k "$GATEWAY_DOMAIN/$GATEWAY_LABEL"
+      sleep 2
+      info "OpenClaw gateway restarted with new API key"
+    fi
+  fi
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}════════════════════════════════════════════════════${RESET}"
 echo -e "${BOLD} Claude Max API Proxy — Installation Complete        ${RESET}"
 echo -e "${BOLD}════════════════════════════════════════════════════${RESET}"
 echo ""
-echo -e "  ${BOLD}API Key:${RESET}  ${API_KEY}"
-echo -e "  ${BOLD}Endpoint:${RESET} http://localhost:${PORT}/v1"
+echo -e "  ${BOLD}API Key:${RESET}      ${API_KEY}"
+echo -e "  ${BOLD}Endpoint:${RESET}     http://localhost:${PORT}/v1"
+echo -e "  ${BOLD}Concurrency:${RESET}  ${MAX_CONCURRENT} max subprocesses, ${MAX_QUEUE_DEPTH} queue depth"
+echo -e "  ${BOLD}Rate limit:${RESET}   ${RATE_LIMIT_RPM} req/min"
+echo -e "  ${BOLD}Retry:${RESET}        ${SUBPROCESS_RETRY} retries on transient failure"
+echo -e "  ${BOLD}Dedup:${RESET}        ${DEDUP_WINDOW_MS}ms window"
+echo -e "  ${BOLD}Timeout:${RESET}      $((SUBPROCESS_TIMEOUT_MS / 60000)) min per subprocess"
 
 if [[ "$PLATFORM" == "linux" ]]; then
   echo -e "  ${BOLD}Logs:${RESET}     journalctl --user -u ${SERVICE_NAME} -f"
